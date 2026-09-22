@@ -637,8 +637,28 @@ impl SessionActor {
             summary_preview: None,
         })
         .await;
+        // After the completion event: a client that clears its pane on
+        // AutoCompactCompleted restores from this later Plan on replay.
+        self.republish_todo_plan().await;
         self.emit_status_snapshot_detached();
         Ok(())
+    }
+    /// Re-emit the live todo list after compaction. The pane is a projection of
+    /// `Plan` events, and `TodoState` is not cleared. Must run after
+    /// `AutoCompactCompleted` so replay does not end on a client that clears
+    /// its pane when that event arrives.
+    async fn republish_todo_plan(&self) {
+        use crate::tools::todo::{TodoState, plan_from_todo_state};
+        use xai_grok_tools::types::resources::State;
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        let Some(state) = bridge.read_resource::<State<TodoState>>().await else {
+            return;
+        };
+        self.send_update(
+            acp::SessionUpdate::Plan(plan_from_todo_state(&state.0)),
+            None,
+        )
+        .await;
     }
     async fn emit_compact_cancelled(&self, auto_trigger: bool) -> Result<(), acp::Error> {
         if auto_trigger {
@@ -1945,12 +1965,20 @@ impl SessionActor {
         if self.memory.is_enabled() {
             tracing::info!(target: xai_grok_telemetry::memory_log::TARGET, "MEMORY_COMPACT: post-compaction reset, next turn re-checks injection (search only if no block persisted)");
         }
-        let _ = self
-            .notifications
-            .persistence_tx
-            .send(PersistenceMsg::PlanState(
-                crate::tools::todo::TodoState::default(),
-            ));
+        // TodoState survives compaction. Persist that snapshot; do not replace
+        // plan.json with an empty list. Clone the bridge before the await so
+        // the agent RefCell is not held across it.
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        if let Some(state) = bridge
+            .read_resource::<xai_grok_tools::types::resources::State<crate::tools::todo::TodoState>>(
+            )
+            .await
+        {
+            let _ = self
+                .notifications
+                .persistence_tx
+                .send(PersistenceMsg::PlanState(state.0));
+        }
         self.agent
             .borrow()
             .tool_bridge()
@@ -2309,6 +2337,7 @@ impl SessionActor {
                     summary_preview: None,
                 })
                 .await;
+                self.republish_todo_plan().await;
                 self.emit_status_snapshot_detached();
                 Ok(())
             }

@@ -873,6 +873,68 @@
         );
     }
 
+    fn compact_completed_ext(session_id: &str, is_replay: bool) -> acp::ExtNotification {
+        let notif = SessionNotification {
+            session_id: acp::SessionId::new(session_id),
+            update: XaiSessionUpdate::AutoCompactCompleted {
+                tokens_before: Some(90_000),
+                tokens_after: 20_000,
+                elapsed_ms: Some(500),
+                summary_preview: None,
+            },
+            meta: is_replay.then(|| serde_json::json!({ "isReplay": true })),
+        };
+        let raw = serde_json::value::to_raw_value(&notif).unwrap();
+        acp::ExtNotification::new("x.ai/session_notification", std::sync::Arc::from(raw))
+    }
+
+    fn seed_todo(agent: &mut AgentView) {
+        agent.todo.update_todos(vec![xai_grok_shell::tools::TodoItem {
+            content: "keep me".into(),
+            priority: xai_grok_shell::tools::TodoPriority::High,
+            status: xai_grok_shell::tools::TodoStatus::InProgress,
+            meta: None,
+        }]);
+    }
+
+    #[test]
+    fn compact_completed_keeps_existing_todos() {
+        let mut app = make_app_with_agent("sess-1");
+        seed_todo(app.agents.get_mut(&AgentId(0)).unwrap());
+        assert!(handle_session_notification(
+            &compact_completed_ext("sess-1", false),
+            &mut app,
+        ));
+        let todos = app.agents.get(&AgentId(0)).unwrap().todo.todos();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].content, "keep me");
+        assert_eq!(
+            todos[0].status,
+            xai_grok_shell::tools::TodoStatus::InProgress
+        );
+    }
+
+    #[test]
+    fn replayed_compact_completed_keeps_existing_todos() {
+        let mut app = make_app_with_agent("sess-1");
+        {
+            let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+            agent.session.loading_replay = true;
+            seed_todo(agent);
+        }
+        assert!(handle_session_notification(
+            &compact_completed_ext("sess-1", true),
+            &mut app,
+        ));
+        let todos = app.agents.get(&AgentId(0)).unwrap().todo.todos();
+        assert_eq!(
+            todos.len(),
+            1,
+            "replayed AutoCompactCompleted must not wipe the pane"
+        );
+        assert_eq!(todos[0].content, "keep me");
+    }
+
     #[test]
     fn apply_compaction_completed_defers_message_until_turn_end() {
         let mut session = make_session(Some("s1"));

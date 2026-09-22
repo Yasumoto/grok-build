@@ -71,3 +71,52 @@ pub(crate) fn plan_entry_from_todo_item(item: TodoItem) -> acp::PlanEntry {
     )
     .meta(meta.and_then(|v| v.as_object().cloned()))
 }
+
+/// ACP `Plan` projection of the live todo resource.
+///
+/// Compaction republishes this after `AutoCompactCompleted`. The pane is fed
+/// only by `Plan` events, and that completion event must not be the last word
+/// or a client that clears on it ends the replay with an empty list.
+pub(crate) fn plan_from_todo_state(state: &TodoState) -> acp::Plan {
+    acp::Plan::new(
+        state
+            .todo_items()
+            .cloned()
+            .map(plan_entry_from_todo_item)
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plan_from_todo_state_keeps_actionable_items() {
+        let mut state = TodoState::default();
+        state.push(
+            "1".into(),
+            TodoItem {
+                content: "wire up auth".into(),
+                priority: TodoPriority::High,
+                status: TodoStatus::InProgress,
+                meta: None,
+            },
+        );
+        state.push(
+            "2".into(),
+            TodoItem {
+                content: "add tests".into(),
+                priority: TodoPriority::Medium,
+                status: TodoStatus::Pending,
+                meta: None,
+            },
+        );
+        let plan = plan_from_todo_state(&state);
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(plan.entries[0].content, "wire up auth");
+        assert_eq!(plan.entries[0].status, acp::PlanEntryStatus::InProgress);
+        assert_eq!(plan.entries[1].content, "add tests");
+        assert_eq!(plan.entries[1].status, acp::PlanEntryStatus::Pending);
+    }
+}

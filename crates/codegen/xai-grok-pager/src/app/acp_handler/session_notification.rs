@@ -301,9 +301,9 @@ pub(super) fn handle_session_notification_with_origin(
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
             let changed = apply_compaction_or_retry_update(agent, update, is_api_key_auth);
-            if let XaiSessionUpdate::AutoCompactCompleted { .. } = update {
-                agent.todo.update_todos(Vec::new());
-            }
+            // Do not clear the todo pane. Compaction keeps TodoState; this event
+            // only refreshes the context bar. A clear here also runs on replay
+            // and would wipe the list after earlier Plan events restore it.
             changed
         }
         XaiSessionUpdate::ImageCompressed {
