@@ -1,8 +1,17 @@
 use std::borrow::Cow;
 
 pub fn redact_owned(input: &str) -> Option<String> {
+    redact_owned_with(input, xai_grok_secrets::redact_user_paths)
+}
+
+/// [`redact_owned`] with the user-path pass injected: tests pin usernames without touching the process-wide env,
+/// and values that are verbatim by design pass `|s| Cow::Borrowed(s)` to get the secret scrub alone.
+pub fn redact_owned_with(
+    input: &str,
+    redact_user_paths: impl for<'a> FnOnce(&'a str) -> Cow<'a, str>,
+) -> Option<String> {
     let secrets = xai_grok_secrets::redact_secrets(input);
-    let after = match xai_grok_secrets::redact_user_paths(secrets.as_ref()) {
+    let after = match redact_user_paths(secrets.as_ref()) {
         Cow::Owned(paths) => paths,
         Cow::Borrowed(_) => match secrets {
             Cow::Owned(s) => s,

@@ -184,7 +184,8 @@ pub fn redact_user_paths(input: &str) -> Cow<'_, str> {
     redact_user_paths_with_backstop(input, HOME_DIR.as_deref(), USERNAMES.as_slice())
 }
 
-fn redact_user_paths_with_backstop<'a>(
+/// [`redact_user_paths`] with explicit `home`/`usernames` in place of the process-wide env snapshot, so tests can pin them.
+pub fn redact_user_paths_with_backstop<'a>(
     input: &'a str,
     home: Option<&str>,
     usernames: &[String],

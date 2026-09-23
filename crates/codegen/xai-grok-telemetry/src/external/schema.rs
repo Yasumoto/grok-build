@@ -249,6 +249,15 @@ pub(crate) fn gate_for_key(key: &str) -> Option<Gate> {
     }
 }
 
+/// `true` for the identity keys `emit.rs` attaches verbatim from the identity snapshot (not content, never scrubbed).
+pub(crate) fn is_identity_key(key: &str) -> bool {
+    use ExternalKey::*;
+    matches!(
+        ExternalKey::from_str(key),
+        Ok(UserId | UserEmail | OrganizationId | TeamId | DeploymentId)
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Record structure
 // ─────────────────────────────────────────────────────────────────────────────

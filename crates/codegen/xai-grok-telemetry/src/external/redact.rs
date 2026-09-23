@@ -7,6 +7,7 @@
 //! On any violation they *drop* (a record for logs, the whole export for metrics) rather than scrub in place.
 //! Dropping telemetry on a schema bug is acceptable; leaking is not.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -20,7 +21,7 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMe
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 
 use super::config::ContentGates;
-use super::schema::{external_allowed_keys, gate_for_key};
+use super::schema::{external_allowed_keys, gate_for_key, is_identity_key};
 
 /// Shared, tighten-only view of the content gates.
 /// The remote kill switch may force gates off mid-run; the exporters re-read on every export.
@@ -70,7 +71,8 @@ fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
         match value {
             AnyValue::Int(_) | AnyValue::Double(_) | AnyValue::Boolean(_) => {}
             AnyValue::String(s) => {
-                if crate::redact_common::redact_owned(s.as_str()).is_some() {
+                if !string_value_is_clean(key_str, s.as_str(), xai_grok_secrets::redact_user_paths)
+                {
                     tracing::debug!(
                         key = key_str,
                         "external otel: dropping record with unscrubbed string value"
@@ -89,6 +91,23 @@ fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
         }
     }
     true
+}
+
+/// `true` when a string value carries no secret or user-path shape the emit path should have scrubbed.
+/// Identity values are attached verbatim by design, so they get the secret check only: the user-path pass would fold an
+/// email whose local part equals `$USER` (`alice@corp.example` -> `<user>@corp.example`) and drop every record.
+/// `redact_user_paths` is injected so tests can pin usernames without the process-wide `$USER`/`$HOME` snapshot.
+pub(crate) fn string_value_is_clean(
+    key: &str,
+    value: &str,
+    redact_user_paths: impl for<'a> FnOnce(&'a str) -> Cow<'a, str>,
+) -> bool {
+    let rewritten = if is_identity_key(key) {
+        crate::redact_common::redact_owned_with(value, |s| Cow::Borrowed(s))
+    } else {
+        crate::redact_common::redact_owned_with(value, redact_user_paths)
+    };
+    rewritten.is_none()
 }
 
 /// Wraps the OTLP [`LogExporter`]; drops any record that violates the pinned schema before delegating.

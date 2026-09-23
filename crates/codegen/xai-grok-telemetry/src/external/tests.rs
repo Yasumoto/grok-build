@@ -1963,6 +1963,43 @@ fn redacting_log_exporter_drops_record_with_unknown_key() {
     );
 }
 
+/// The export validator's per-string check with `usernames` pinned, independent of the process-wide `$USER`.
+fn string_clean_for_user(key: &str, value: &str, usernames: &[String]) -> bool {
+    super::redact::string_value_is_clean(key, value, |s| {
+        xai_grok_secrets::redact_user_paths_with_backstop(s, None, usernames)
+    })
+}
+
+#[test]
+fn validator_keeps_identity_email_whose_local_part_is_the_username() {
+    // Regression: under `USER=jim.meador` the user-path pass folded `jim.meador@…` to `<user>@…`, so the validator
+    // dropped every log record (each carries the verbatim `user.email`) while metrics still exported.
+    let usernames = ["jim.meador".to_owned()];
+    assert!(string_clean_for_user(
+        "user.email",
+        "jim.meador@corp.example",
+        &usernames
+    ));
+    assert!(string_clean_for_user("user.id", "jim.meador", &usernames));
+    // Identity keys still get the secret check.
+    assert!(!string_clean_for_user(
+        "user.email",
+        "sk-CANARYabcdefghij1234567890",
+        &usernames
+    ));
+    // Every other key keeps the user-path check.
+    assert!(!string_clean_for_user(
+        "file_path",
+        "/data/jim.meador/proj/main.rs",
+        &usernames
+    ));
+    assert!(!string_clean_for_user(
+        "prompt",
+        "mail jim.meador@corp.example",
+        &usernames
+    ));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Remote policy: tighten-only
 // ─────────────────────────────────────────────────────────────────────────────
